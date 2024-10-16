@@ -322,7 +322,7 @@ void close (int fd){	//(oom_update)
 void user_memory_valid(void *r){
 	struct thread *current = thread_current();  
 	uint64_t *pml4 = current->pml4;
-	if (r == NULL || is_kernel_vaddr(r) || pml4_get_page(pml4,r) == NULL){
+	if (r == NULL || is_kernel_vaddr(r) ){ //|| pml4_get_page(pml4,r) == NULL){
 		exit(-1);
 	}
 }

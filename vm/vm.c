@@ -255,6 +255,34 @@ supplemental_page_table_init (struct supplemental_page_table *spt UNUSED) {
 bool
 supplemental_page_table_copy (struct supplemental_page_table *dst UNUSED,
 		struct supplemental_page_table *src UNUSED) {
+    struct hash_iterator i;
+    hash_first(&i, &src->hash_table);
+    while (hash_next(&i))
+    {
+        struct page *src_page = hash_entry(hash_cur(&i), struct page, hash_elem);
+        enum vm_type type = src_page->operations->type;
+        void *upage = src_page->va;
+        bool writable = src_page->rw;
+
+        if (type == VM_UNINIT)
+        { 
+            vm_initializer *init = src_page->uninit.init;
+            void *aux = src_page->uninit.aux;
+            vm_alloc_page_with_initializer(VM_ANON, upage, writable, init, aux);
+            continue;
+        }
+
+        if (!vm_alloc_page(type, upage, writable)) 
+            return false;
+
+        if (!vm_claim_page(upage))
+            return false;
+
+        struct page *dst_page = spt_find_page(dst, upage);
+        memcpy(dst_page->frame->kva, src_page->frame->kva, PGSIZE);
+    }
+    return true;
+
 }
 
 /* Free the resource hold by the supplemental page table */
@@ -262,6 +290,7 @@ void
 supplemental_page_table_kill (struct supplemental_page_table *spt UNUSED) {
 	/* TODO: Destroy all the supplemental_page_table hold by thread and
 	 * TODO: writeback all the modified contents to the storage. */
+	hash_clear(&spt->hash_table, hash_destructor_func);
 }
 
 uint64_t 
@@ -277,4 +306,11 @@ page_less_func (const struct hash_elem *a_,
   const struct page *b = hash_entry (b_, struct page, hash_elem);
 
   return a->va < b->va;
+}
+
+void hash_destructor_func(struct hash_elem *e,void *aux)
+{
+	struct page *page = hash_entry (e,struct page, hash_elem);
+	destroy(page);
+	free(page);
 }

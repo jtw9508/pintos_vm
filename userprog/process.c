@@ -555,7 +555,6 @@ load (const char *file_name, struct intr_frame *if_) {
 	// hex_dump((uintptr_t)if_->rsp, (void *)if_->rsp, USER_STACK - (uintptr_t)if_->rsp, true);
 	success = true;
 
-
 done:
 	/* We arrive here whether the load is successful or not. */
 	// file_close (file);		// minjae's 경우 없앰
@@ -713,6 +712,7 @@ install_page (void *upage, void *kpage, bool writable) {
 /* From here, codes will be used after project 3.
  * If you want to implement the function for only project 2, implement it on the
  * upper block. */
+
 struct container {
 	struct file *file;
 	off_t ofs;
@@ -727,10 +727,11 @@ lazy_load_segment (struct page *page, void *aux) {
 	file_seek(container->file, container->ofs);
 	if (file_read(container->file,page->frame->kva, container->page_read_bytes) != (int)container->page_read_bytes) {
 		palloc_free_page(page->frame->kva);
+		// free(aux);
 		return false;
 	}	
 	memset(page->frame->kva+container->page_read_bytes, 0, container->page_zero_bytes);
-	
+	// free(aux);
 	return true;
 }
 	// vm_get_frame();
@@ -775,7 +776,7 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 		
 		if (!vm_alloc_page_with_initializer (VM_ANON, upage,
 					writable, lazy_load_segment, aux)) {
-			// free(aux);			
+			free(aux);			
 			return false;
 		}
 		// free(aux);
@@ -795,9 +796,6 @@ static bool
 setup_stack (struct intr_frame *if_) {
 	bool success = false;
 	void *stack_bottom = (void *) (((uint8_t *) USER_STACK) - PGSIZE);
-	// struct thread *t = thread_current();
-	// uint8_t *kpage;
-	// bool success = false;
 	if (vm_alloc_page(VM_MARKER_0 | VM_ANON, stack_bottom, true))
 	{
 		success = vm_claim_page(stack_bottom);
