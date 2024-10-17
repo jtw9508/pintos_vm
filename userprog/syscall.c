@@ -153,6 +153,11 @@ syscall_handler (struct intr_frame *f UNUSED) {
 			// printf("SYS_CLOSE\n");
 			close(arg1);
 			break;
+		case SYS_MMAP:
+			f->R.rax = do_mmap(arg1,arg2,arg3,get_file_by_descriptor(arg4),arg5);
+			break;
+		case SYS_MUNMAP:
+			do_munmap(arg1);
 		default:
 			// printf("default;\n");
 			break;
