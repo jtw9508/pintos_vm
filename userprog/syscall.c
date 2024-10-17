@@ -42,7 +42,7 @@ struct inode {
 
 void syscall_entry (void);
 void syscall_handler (struct intr_frame *);
-void user_memory_valid(void *r);
+bool user_memory_valid(void *r);
 struct file *get_file_by_descriptor(int fd);
 struct lock syscall_lock;
 
@@ -104,7 +104,7 @@ syscall_handler (struct intr_frame *f UNUSED) {
 			break;
 		case SYS_EXEC:							//  3 새로운 프로그램 실행
 			// printf("SYS_EXEC\n");
-			user_memory_valid((void *)arg1);
+			check_valid_string((const char *)arg1);
 			f->R.rax=exec(arg1);
 			break;
 		case SYS_WAIT:							//  4 자식 프로세스 대기
@@ -113,17 +113,17 @@ syscall_handler (struct intr_frame *f UNUSED) {
 			break;
 		case SYS_CREATE:						//  5 파일 생성
 			// printf("SYS_CREATE\n");
-			user_memory_valid((void *)arg1);
+			check_valid_string((const char *)arg1);
 			f->R.rax=create(arg1,arg2);
 			break;
 		case SYS_REMOVE:						//  6 파일 삭제
 			// printf("SYS_REMOVE\n");
-			user_memory_valid((void *)arg1);
+			check_valid_string((const char *)arg1);
 			f->R.rax=remove(arg1);
 			break;
 		case SYS_OPEN:							//  7 파일 열기
 			// printf("SYS_OPEN\n");
-			user_memory_valid((void *)arg1);
+			check_valid_string((const char *)arg1);
 			f->R.rax=open(arg1);
 			break;
 		case SYS_FILESIZE:						//  8 파일 크기 조회
@@ -132,12 +132,13 @@ syscall_handler (struct intr_frame *f UNUSED) {
 			break;
 		case SYS_READ:							//  9 파일에서 읽기
 			// printf("SYS_READ\n");
-			user_memory_valid((void *)arg2);
-			f->R.rax=read(arg1,arg2,arg3);
+			check_valid_buffer(f->R.rsi, f->R.rdx, f->rsp, 1);
+			// check_address((void *)arg2);
+			f->R.rax = read(f->R.rdi, f->R.rsi, f->R.rdx);
 			break;
 		case SYS_WRITE:							//  10 파일에 쓰기
 			// printf("SYS_WRITE\n");
-			user_memory_valid((void *)arg2);
+			check_valid_buffer(f->R.rsi, f->R.rdx, f->rsp, 0);
 			f->R.rax=write((int)arg1,(void *)arg2,(unsigned)arg3);
 			break;
 		case SYS_SEEK:							//  11 파일 내 위치 변경
@@ -244,7 +245,6 @@ int read (int fd, void *buffer, unsigned size){
 		}
 		return i;
 	}
-	
     struct file *file = get_file_by_descriptor(fd);
 	if (file == NULL || fd == STD_OUT || fd == STD_ERR)  // 빈 파일, stdout, stderr를 읽으려고 할 경우
 		return -1;
@@ -256,6 +256,7 @@ int read (int fd, void *buffer, unsigned size){
 
 	return bytes;
 }
+
 
 int write (int fd, const void *buffer, unsigned size){
 	if (fd == STD_IN || fd == STD_ERR){
@@ -319,12 +320,37 @@ void close (int fd){	//(oom_update)
 }
 
 
-void user_memory_valid(void *r){
-	struct thread *current = thread_current();  
-	uint64_t *pml4 = current->pml4;
-	if (r == NULL || is_kernel_vaddr(r) ){ //|| pml4_get_page(pml4,r) == NULL){
-		exit(-1);
-	}
+bool user_memory_valid(void *r) {
+    return r != NULL && is_user_vaddr(r);
+}
+
+
+struct page * check_address(void *addr) {
+    if (is_kernel_vaddr(addr))
+    {
+        exit(-1);
+    }
+    return spt_find_page(&thread_current()->spt, addr);
+}
+
+void check_valid_buffer(void* buffer, unsigned size, void* rsp, bool to_write) {
+    for (int i = 0; i < size; i++) {
+        struct page* page = check_address(buffer + i);    // 인자로 받은 buffer부터 buffer + size까지의 크기가 한 페이지의 크기를 넘을수도 있음
+        if(page == NULL)
+            exit(-1);
+        if(to_write == true && page->rw == false)
+            exit(-1);
+    }
+}
+
+void check_valid_string(const char *str) {
+    while (true) {
+        check_address((const void *)str);
+        if (*str == '\0') {
+            break;
+        }
+        str++;
+    }
 }
 
 struct file *get_file_by_descriptor(int fd)

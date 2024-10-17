@@ -800,7 +800,8 @@ setup_stack (struct intr_frame *if_) {
 	{
 		success = vm_claim_page(stack_bottom);
 		if (success) {
-		if_->rsp = USER_STACK;
+			if_->rsp = USER_STACK;
+			thread_current()->bottom = USER_STACK;
 		}
 	}
 	return success;
