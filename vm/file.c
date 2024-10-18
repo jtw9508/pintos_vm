@@ -2,6 +2,7 @@
 
 #include "vm/vm.h"
 #include "threads/vaddr.h"
+#include "threads/mmu.h"
 
 static bool file_backed_swap_in(struct page *page, void *kva);
 static bool file_backed_swap_out(struct page *page);
@@ -47,16 +48,12 @@ file_backed_swap_out(struct page *page)
 static void
 file_backed_destroy(struct page *page)
 {
+	if (page == NULL)
+		return;
+
 	struct file_page *file_page UNUSED = &page->file;
+	// file_close(file_page->file);
 }
-
-
-struct lazy_load_info {
-	struct file *file;
-	off_t offset;
-	size_t page_read_bytes;	
-	size_t page_zero_bytes;
-};
 
 static bool lazy_load_segment_mmap (struct page *page, void *aux) {
 	/* TODO: Load the segment from the file */
@@ -64,12 +61,14 @@ static bool lazy_load_segment_mmap (struct page *page, void *aux) {
 	/* TODO: VA is available when calling this function. */
 
 	/* NOTE: The beginning where custom code is added */
-	struct lazy_load_info *info = (struct lazy_load_info *)aux;
+	struct file_page *info = (struct file_page *)aux;
     struct file *file = info->file;
     off_t offset = info->offset;
     size_t page_read_bytes = info->page_read_bytes;
     size_t page_zero_bytes = info->page_zero_bytes;
 
+	page->file.file = file;
+	page->file.page_read_bytes = page_read_bytes;
 	/* Allocate a physical frame */
     uint8_t *kva = page->frame->kva;
 
@@ -87,8 +86,27 @@ static bool lazy_load_segment_mmap (struct page *page, void *aux) {
 	/* NOTE: The end where custom code is added */
 }
 
-/* Do the mmap */
 void *
+mmap_file (void *addr, size_t length, int writable, int fd, off_t offset) {
+    if (offset % PGSIZE != 0 || pg_round_down(addr) != addr || is_kernel_vaddr(addr) ||
+		addr == NULL || (long)length <= 0 || (addr + length >= KERN_BASE))
+        return NULL;
+	
+    if (fd == 0 || fd == 1)
+        exit(-1);
+    
+    if (spt_find_page(&thread_current()->spt, addr))
+        return NULL;
+
+    struct file *file = thread_current()->fd_table[fd];
+    if (file == NULL)
+        return NULL;
+		
+    return do_mmap(addr, length, writable, file, offset);
+}
+
+/* Do the mmap */
+static void *
 do_mmap (void *addr, size_t length, int writable, struct file *file, off_t offset) {
 	/* NOTE: The beginning where custom code is added */
 	struct file *mmap_file = file_reopen(file);
@@ -100,14 +118,14 @@ do_mmap (void *addr, size_t length, int writable, struct file *file, off_t offse
 		size_t page_read_bytes = read_bytes < PGSIZE ? read_bytes : PGSIZE;
 		size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
-		struct lazy_load_info *info = (struct lazy_load_info*)malloc(sizeof(struct lazy_load_info));
+		struct file_page *info = (struct file_page *)malloc(sizeof(struct file_page));
 		info->file = mmap_file;
 		info->offset = offset;
 		info->page_read_bytes = page_read_bytes;
 		info->page_zero_bytes = page_zero_bytes;
 		if (!vm_alloc_page_with_initializer (VM_FILE, addr, writable, lazy_load_segment_mmap, info)) {
 			return NULL;
-    }
+    	}
 		read_bytes -= page_read_bytes;
 		zero_bytes -= page_zero_bytes;
 		addr       += PGSIZE;
@@ -118,66 +136,49 @@ do_mmap (void *addr, size_t length, int writable, struct file *file, off_t offse
 	/* NOTE: The end where custom code is added */
 }
 
-// bool
-// lazy_load_mmap (struct page *page, void *aux) {
-// 	/* TODO: Load the segment from the file */
-// 	struct container *container = (struct container *)aux;
-// 	file_seek(container->file, container->ofs);
-// 	if (file_read(container->file,page->frame->kva, container->page_read_bytes) != (int)container->page_read_bytes) {
-// 		palloc_free_page(page->frame->kva);
-
-// 		return false;
-// 	}
-// 	memset(page->frame->kva+container->page_read_bytes, 0, container->page_zero_bytes);
-// 	// free(aux);
-// 	return true;
-// }
-
-// /* Do the mmap */
-// void *
-// do_mmap(void *addr, size_t length, int writable,
-// 		struct file *file, off_t offset)
-// {
-// 	if (length == NULL)
-// 		return NULL;
-
-// 	if (addr == 0 && pg_round_down(addr) != addr)
-// 		return NULL;
-	
-// 	addr = pg_round_down(addr);
-// 	for (uint64_t i = (uint64_t)addr; i < addr + length; i + PGSIZE) {
-// 		if (spt_find_page(&thread_current()->spt, pg_round_down(i)) != NULL)
-// 			return NULL;
-// 	}
-
-// 	uint32_t read_bytes, zero_bytes;
-// 	while (read_bytes > 0 || zero_bytes > 0) {
-// 		size_t page_read_bytes = read_bytes < PGSIZE ? read_bytes : PGSIZE;
-// 		size_t page_zero_bytes = PGSIZE - page_read_bytes;
-
-// 		/* TODO: Set up aux to pass information to the lazy_load_segment. */
-// 		struct container *aux = (struct container *)malloc(sizeof(struct container));
-// 		aux->file = file;
-// 		aux->ofs = offset;
-// 		aux->page_read_bytes = page_read_bytes;
-// 		aux->page_zero_bytes = page_zero_bytes;
-		
-// 		if (!vm_alloc_page_with_initializer(VM_FILE, addr, writable, lazy_load_mmap, aux)) {
-// 			// free(aux);	
-// 			return NULL;
-// 		}
-
-// 		/* Advance. */
-// 		read_bytes -= page_read_bytes;		
-// 		zero_bytes -= page_zero_bytes;
-// 		addr += PGSIZE;
-
-// 		offset += page_read_bytes;
-// 	}
-// }
+void munmap(void *addr) {
+	do_munmap(addr);
+}
 
 /* Do the munmap */
-void do_munmap(void *addr)
-{
-	
+static void 
+do_munmap(void *addr) {
+	struct page* page = NULL;
+	off_t offset = 0;
+    while (true) {
+		page = spt_find_page(&thread_current()->spt, addr);
+		if (page == NULL) 
+			break;
+		if (page->operations->type != VM_FILE)
+			break;
+
+		/* 수정된 페이지(dirty bit == 1)는 파일에 업데이트해놓는다. 이후에 dirty bit을 0으로 만든다. */
+		if (pml4_is_dirty(thread_current()->pml4, page->va)){
+			file_write_at(page->file.file, addr, page->file.page_read_bytes, offset);
+			pml4_set_dirty(thread_current()->pml4, page->va, 0);
+		}
+		
+		pml4_clear_page(thread_current()->pml4, page->va);
+		addr += PGSIZE;
+		offset += PGSIZE;
+    }
+	// file_backed_destroy(page);
+
+	// struct thread *cur = thread_current();
+	// struct page *mun_page = NULL;
+	// void *first_va = addr;
+	// off_t offset = 0;
+	// while ((mun_page = spt_find_page(&cur->spt, addr) != NULL)) {
+	// 	if (mun_page->operations->type != VM_FILE)
+	// 		break;
+	// 	if (mun_page->file.mmap_ptr != first_va)
+	// 		break;
+	// 	if (pml4_is_dirty(cur->pml4, addr)) {
+	// 		file_write(&mun_page->file.file, mun_page->frame->kva, PGSIZE);
+	// 		spt_remove_page(&cur->spt, mun_page);
+	// 	}
+	// 	addr += PGSIZE;
+	// 	offset += PGSIZE;
+	// }
+	// file_backed_destroy(mun_page);
 }
