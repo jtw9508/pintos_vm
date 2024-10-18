@@ -203,13 +203,13 @@ bool vm_try_handle_fault(struct intr_frame *f UNUSED, void *addr UNUSED,
 
 	if (user)
 	{
-		cur->bottom = f->rsp;
+		cur->rsp = f->rsp;
 	}
 
 	// stack growth인 경우
 	if (addr < USER_STACK && addr > USER_STACK - (1 << 20))
 	{
-		if (addr >= cur->bottom - 8)
+		if (addr >= cur->rsp - 8)
 		{
 			vm_stack_growth(addr);
 		}
