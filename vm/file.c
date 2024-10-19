@@ -80,7 +80,9 @@ static bool lazy_load_segment_mmap(struct page *page, void *aux)
 	off_t offset = info->ofs;
 	size_t page_read_bytes = info->page_read_bytes;
 	size_t page_zero_bytes = info->page_zero_bytes;
-
+	page->file.file = file;
+    page->file.page_read_bytes = page_read_bytes;
+    page->file.offset = offset;
 	/* Allocate a physical frame */
 	uint8_t *kva = page->frame->kva;
 
@@ -108,7 +110,8 @@ do_mmap(void *addr, size_t length, int writable, struct file *file, off_t offset
 	struct file *mmap_file = file_reopen(file);
 	void *first_addr = addr;
 	size_t read_bytes = length > file_length(file) ? file_length(file) : length;
-	size_t zero_bytes = length - read_bytes;
+	size_t zero_bytes = (read_bytes % PGSIZE) ? PGSIZE - (read_bytes % PGSIZE) : 0; //length - read_bytes;
+	
 	if (addr == NULL || (file == NULL) || is_kernel_vaddr(addr) || ((long)length <= 0) || (pg_round_down(addr) != addr) || is_kernel_vaddr(addr + length))
 		return NULL;
 	while (read_bytes > 0 || zero_bytes > 0)
